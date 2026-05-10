@@ -1,0 +1,144 @@
+@import "tailwindcss";
+
+:root {
+  --ibc-red: #b40105;
+  --ibc-red-dark: #860104;
+  --ibc-black: #222222;
+  --ibc-surface: #ffffff;
+  --ibc-border: #d9d9d9;
+  --ibc-text: #222222;
+  --ibc-muted: #767676;
+  --ibc-bg: #f6f6f6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  color: var(--ibc-text);
+  background: var(--ibc-bg);
+  font-size: 17px;
+  line-height: 1.55;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button,
+input,
+select {
+  min-height: 44px;
+}
+
+button {
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+input,
+textarea,
+select {
+  background: var(--ibc-surface);
+  border-color: var(--ibc-border);
+}
+
+::placeholder {
+  color: #8f8f8f;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 3px solid var(--ibc-red);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@page {
+  size: A4;
+  margin: 12mm;
+}
+
+@media print {
+  html,
+  body {
+    margin: 0 !important;
+    min-width: 0 !important;
+    background: #fff !important;
+  }
+
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  body.ibc-print-declaracao > * {
+    display: none !important;
+  }
+
+  body.ibc-print-declaracao > .ibc-declaracao-documento-print-portal {
+    display: flex !important;
+    align-items: flex-start !important;
+    justify-content: center !important;
+    position: fixed !important;
+    inset: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: #fff !important;
+    overflow: hidden !important;
+  }
+
+  body.ibc-print-declaracao > .ibc-declaracao-documento-print-portal {
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+
+  body.ibc-print-declaracao > .ibc-declaracao-documento-print-portal .ibc-declaracao-documento-surface {
+    width: 820px !important;
+    max-width: none !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    background: #fff !important;
+    transform-origin: top center !important;
+    transform: scale(var(--ibc-print-scale, 1)) !important;
+  }
+
+  body.ibc-print-declaracao .ibc-print-evitar-quebra {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+}
