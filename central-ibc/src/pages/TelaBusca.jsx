@@ -26,6 +26,14 @@ function formatarDataHora(valor) {
 }
 
 function getStatusEnvio(documento) {
+  if (documento.statusDocumento === 'enviado') {
+    return 'Enviado'
+  }
+
+  if (documento.statusDocumento === 'erro') {
+    return 'Erro'
+  }
+
   if (documento.statusEnvio === 'enviado') {
     return 'Enviado'
   }
@@ -94,8 +102,8 @@ export default function TelaBusca({
     )
   }, [documentos, termoDiferido])
 
-  function handleAbrirPdf(documento) {
-    const abriu = abrirPdfDocumentoEmitido(documento)
+  async function handleAbrirPdf(documento) {
+    const abriu = await abrirPdfDocumentoEmitido(documento)
 
     if (!abriu) {
       setMensagem('Não foi possível abrir o PDF deste documento.')
@@ -175,8 +183,12 @@ export default function TelaBusca({
                 <p className="mt-2 break-all text-sm font-semibold text-[#374151]">
                   {item.nomeArquivoPdf}
                 </p>
+                {item.caminhoPdf ? (
+                  <p className="mt-1 break-all text-xs text-[#64748B]">{item.caminhoPdf}</p>
+                ) : null}
                 <p className="mt-1 text-sm text-[#4B5563]">
                   Emitido em {formatarDataHora(item.emitidoEm)}
+                  {item.acaoGeradora ? ` | Ação: ${item.acaoGeradora}` : ''}
                   {item.emailDestinatario
                     ? ` | Destinatário: ${item.emailDestinatario}`
                     : ' | Sem envio registrado'}

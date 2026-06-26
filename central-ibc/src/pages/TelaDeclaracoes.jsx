@@ -46,8 +46,15 @@ import {
   criarNomeArquivoPdf,
 } from '../features/email/utils/emailComposer'
 import { carregarConfiguracaoDocumentos } from '../features/configuracoes/configuracaoDocumentos'
-import { gerarAnexoPdfBase64, gerarAnexoPdfVisualBase64 } from '../features/email/utils/pdfUtils'
+import {
+  criarCloneDocumentoExportacao,
+  gerarAnexoPdfVisualBase64,
+} from '../features/email/utils/pdfUtils'
 import { registrarDocumentoEmitido } from '../features/documentos/utils/documentosEmitidos'
+import {
+  abrirCaminhoSistema,
+  salvarPdfOficial,
+} from '../features/documentos/utils/documentosOficiais'
 
 const inputClass =
   'min-w-0 w-full rounded-[20px] border border-[#D9D9D9] bg-white px-4 py-4 text-base text-[#222222]'
@@ -377,22 +384,69 @@ export default function TelaDeclaracoes({
   onAtualizarProgramacaoOrigem = null,
   onAbrirEnvioEmail = null,
 }) {
-  const [declaracoes, setDeclaracoes] = useState(
-    () => carregarDeclaracoesSalvas() ?? criarEstadoDeclaracoesInicial(),
-  )
+  const [declaracoes, setDeclaracoes] = useState(() => {
+    const declaracoesSalvas = carregarDeclaracoesSalvas() ?? criarEstadoDeclaracoesInicial()
+    const formulariosIniciais = programacaoInicialResumo?.grupoId
+      ? {
+          ...declaracoesSalvas.formularios,
+          ...criarFormulariosComOrigemProgramacao(programacaoInicialResumo),
+        }
+      : {
+          ...declaracoesSalvas.formularios,
+          [MODELO_DECLARACAO_PERIODO]: {
+            ...declaracoesSalvas.formularios[MODELO_DECLARACAO_PERIODO],
+            origemProgramacaoId: '',
+            origemProgramacaoResumo: null,
+          },
+          [MODELO_DECLARACAO_ABENDI]: {
+            ...declaracoesSalvas.formularios[MODELO_DECLARACAO_ABENDI],
+            origemProgramacaoId: '',
+            origemProgramacaoResumo: null,
+          },
+        }
+
+    return {
+      ...declaracoesSalvas,
+      modeloAtivo: MODELO_DECLARACAO_PERIODO,
+      formularios: formulariosIniciais,
+    }
+  })
   const [mensagem, setMensagem] = useState('')
   const [impressaoAtiva, setImpressaoAtiva] = useState(false)
-  const ultimaOrigemAutomaticaRef = useRef('')
   const primeiroSalvamentoAutomaticoRef = useRef(true)
   const [salvamentoAutomaticoEmPorModelo, setSalvamentoAutomaticoEmPorModelo] = useState({})
+  const [filtroProgramacao, setFiltroProgramacao] = useState('')
 
   const programacoesDisponiveis = useMemo(
     () =>
       agruparProgramacoesPorGrupo(agendaMensal).sort(
-        (a, b) => a.dataInicial.localeCompare(b.dataInicial) || a.aluno.localeCompare(b.aluno),
+        (a, b) =>
+          b.dataFinal.localeCompare(a.dataFinal) ||
+          b.dataInicial.localeCompare(a.dataInicial) ||
+          a.aluno.localeCompare(b.aluno),
       ),
     [agendaMensal],
   )
+
+  const programacoesFiltradas = useMemo(() => {
+    const filtro = filtroProgramacao.toLowerCase().trim()
+    const lista = !filtro
+      ? programacoesDisponiveis
+      : programacoesDisponiveis.filter((programacao) =>
+          [
+            programacao.aluno,
+            programacao.tipoTreinamento,
+            programacao.subnivel,
+            programacao.dataInicial,
+            programacao.dataFinal,
+          ]
+            .join(' ')
+            .toLowerCase()
+            .includes(filtro),
+        )
+
+    return filtro ? lista : lista.slice(0, 30)
+  }, [filtroProgramacao, programacoesDisponiveis])
 
   const programacoesPorGrupo = useMemo(
     () => new Map(programacoesDisponiveis.map((programacao) => [programacao.grupoId, programacao])),
@@ -492,41 +546,6 @@ export default function TelaDeclaracoes({
   }, [declaracoes])
 
   useEffect(() => {
-    const grupoId = programacaoInicialResumo?.grupoId ?? ''
-
-    if (!grupoId || ultimaOrigemAutomaticaRef.current === grupoId) {
-      return
-    }
-
-    setDeclaracoes((atual) => ({
-      ...atual,
-      modeloAtivo: MODELO_DECLARACAO_PERIODO,
-      formularios: {
-        ...atual.formularios,
-        ...criarFormulariosComOrigemProgramacao(programacaoInicialResumo),
-      },
-    }))
-    ultimaOrigemAutomaticaRef.current = grupoId
-    const mesAno = getMesAnoDaData(programacaoInicialResumo?.dataInicial)
-    let timeoutMesAno = null
-
-    if (mesAno) {
-      timeoutMesAno = window.setTimeout(() => {
-        setAnoSelecaoDatas(mesAno.ano)
-        setMesSelecaoDatas(mesAno.mes)
-      }, 0)
-    }
-
-    setMensagem('Dados da programação carregados automaticamente para a declaração.')
-
-    return () => {
-      if (timeoutMesAno) {
-        window.clearTimeout(timeoutMesAno)
-      }
-    }
-  }, [programacaoInicialResumo])
-
-  useEffect(() => {
     if (!impressaoAtiva || typeof window === 'undefined') {
       return undefined
     }
@@ -540,10 +559,25 @@ export default function TelaDeclaracoes({
       return () => window.clearTimeout(timeoutSemPreview)
     }
 
-    const previewClone = previewOriginal.cloneNode(true)
-    previewClone.classList.add('ibc-declaracao-documento-print-portal')
-    previewClone.setAttribute('aria-hidden', 'true')
-    body.appendChild(previewClone)
+    const cloneExportacao = criarCloneDocumentoExportacao()
+    const previewClone = cloneExportacao?.clone ?? previewOriginal.cloneNode(true)
+
+    if (!cloneExportacao) {
+      previewClone.classList.add('ibc-declaracao-documento-print-portal')
+      previewClone.setAttribute('aria-hidden', 'true')
+      body.appendChild(previewClone)
+    } else {
+      cloneExportacao.portal.style.left = '0'
+      cloneExportacao.portal.style.top = '0'
+      cloneExportacao.portal.style.zIndex = '99999'
+      cloneExportacao.portal.style.width = '100vw'
+      cloneExportacao.portal.style.height = '100vh'
+      cloneExportacao.portal.style.display = 'flex'
+      cloneExportacao.portal.style.alignItems = 'flex-start'
+      cloneExportacao.portal.style.justifyContent = 'center'
+      cloneExportacao.portal.style.overflow = 'hidden'
+      cloneExportacao.portal.style.background = '#ffffff'
+    }
 
     function ajustarEscalaA4() {
       const superficie = previewClone.querySelector('.ibc-declaracao-documento-surface')
@@ -559,7 +593,8 @@ export default function TelaDeclaracoes({
       const rect = superficie.getBoundingClientRect()
       const larguraAtual = rect.width || superficie.scrollWidth || 1
       const alturaAtual = rect.height || superficie.scrollHeight || 1
-      const escalaCalculada = Math.min(1, larguraUtilA4Px / larguraAtual, alturaUtilA4Px / alturaAtual)
+      const escalaLimite = Math.min(larguraUtilA4Px / larguraAtual, alturaUtilA4Px / alturaAtual)
+      const escalaCalculada = Math.min(1.15, escalaLimite)
       const escala = Number.isFinite(escalaCalculada) ? Math.max(0.1, escalaCalculada) : 1
 
       body.style.setProperty('--ibc-print-scale', escala.toFixed(4))
@@ -571,7 +606,11 @@ export default function TelaDeclaracoes({
     const handleAfterPrint = () => {
       body.classList.remove(classeImpressao)
       body.style.removeProperty('--ibc-print-scale')
-      previewClone.remove()
+      if (cloneExportacao) {
+        cloneExportacao.limpar()
+      } else {
+        previewClone.remove()
+      }
       setImpressaoAtiva(false)
     }
 
@@ -587,7 +626,11 @@ export default function TelaDeclaracoes({
       window.removeEventListener('afterprint', handleAfterPrint)
       body.classList.remove(classeImpressao)
       body.style.removeProperty('--ibc-print-scale')
-      previewClone.remove()
+      if (cloneExportacao) {
+        cloneExportacao.limpar()
+      } else {
+        previewClone.remove()
+      }
     }
   }, [impressaoAtiva])
 
@@ -833,9 +876,87 @@ export default function TelaDeclaracoes({
     setMensagem(`Campos de ${rotulosModeloDeclaracao[modeloAtivo]} reiniciados.`)
   }
 
-  function handleEmitirPdf() {
-    setMensagem('')
-    setImpressaoAtiva(true)
+  async function gerarDocumentoDeclaracaoOficial(acaoGeradora) {
+    const tipoDocumento = rotulosModeloDeclaracao[modeloAtivo] || 'Declaração'
+    const nomePessoa =
+      modeloAtivo === MODELO_DECLARACAO_ABENDI
+        ? normalizarTexto(formularioComprovacao.nomeProfissional)
+        : normalizarTexto(formularioTreinamento.nomeAluno)
+    const subnivel =
+      modeloAtivo === MODELO_DECLARACAO_ABENDI
+        ? normalizarTexto(formularioComprovacao.subnivel)
+        : normalizarTexto(formularioTreinamento.subnivel)
+    const nomeArquivoPdf = criarNomeArquivoPdf({ tipoDocumento, nomePessoa, subnivel })
+    const anexoPrincipal = await gerarAnexoPdfVisualBase64({ nomeArquivo: nomeArquivoPdf })
+
+    if (!anexoPrincipal?.base64) {
+      throw new Error('Não foi possível renderizar o PDF visual da declaração.')
+    }
+    const arquivoSalvo = await salvarPdfOficial({
+      nomeArquivo: nomeArquivoPdf,
+      base64: anexoPrincipal?.base64,
+      categoria: 'declaracoes',
+    })
+    const documentoEmitido = await registrarDocumentoEmitido({
+      tipo: tipoDocumento,
+      aluno: nomePessoa,
+      nomeDocumento: preview.titulo || tipoDocumento,
+      nomeArquivoPdf: arquivoSalvo.nomeArquivo,
+      caminhoPdf: arquivoSalvo.caminhoArquivo,
+      anexoPrincipal,
+      origem: 'declaracoes',
+      acaoGeradora,
+      statusDocumento: 'salvo',
+    })
+
+    return {
+      documentoEmitido,
+      tipoDocumento,
+      nomePessoa,
+      nomeDocumento: preview.titulo || tipoDocumento,
+      nomeArquivoPdf: arquivoSalvo.nomeArquivo,
+      caminhoPdf: arquivoSalvo.caminhoArquivo,
+      usandoPastaTemporaria: arquivoSalvo.usandoPastaTemporaria,
+      anexoPrincipal: {
+        ...anexoPrincipal,
+        nomeArquivo: arquivoSalvo.nomeArquivo,
+      },
+    }
+  }
+
+  async function handleSalvarPdfDeclaracao() {
+    setMensagem('Salvando PDF oficial da declaração...')
+
+    try {
+      const { nomeArquivoPdf, caminhoPdf, usandoPastaTemporaria } =
+        await gerarDocumentoDeclaracaoOficial('salvar')
+      await abrirCaminhoSistema(caminhoPdf)
+      setMensagem(
+        usandoPastaTemporaria
+          ? `PDF salvo e aberto a partir da pasta temporária: ${caminhoPdf}.`
+          : `PDF salvo e aberto: ${caminhoPdf}`,
+      )
+      return { nomeArquivoPdf, caminhoPdf }
+    } catch (erro) {
+      setMensagem(erro?.message || 'Não foi possível salvar o PDF da declaração.')
+      return null
+    }
+  }
+
+  async function handleImprimirDeclaracao() {
+    setMensagem('Salvando PDF oficial da declaração antes de imprimir...')
+
+    try {
+      const { caminhoPdf, usandoPastaTemporaria } = await gerarDocumentoDeclaracaoOficial('imprimir')
+      setMensagem(
+        usandoPastaTemporaria
+          ? `PDF salvo em pasta temporária: ${caminhoPdf}. Abrindo impressão...`
+          : `PDF salvo com sucesso em ${caminhoPdf}. Abrindo impressão...`,
+      )
+      setImpressaoAtiva(true)
+    } catch (erro) {
+      setMensagem(erro?.message || 'Não foi possível salvar o PDF da declaração para impressão.')
+    }
   }
 
   async function handleAbrirEnvioEmailDeclaracao() {
@@ -843,45 +964,40 @@ export default function TelaDeclaracoes({
       return
     }
 
-    setMensagem('Gerando PDF fiel ao documento para anexar ao e-mail...')
+    setMensagem('Salvando PDF oficial da declaração para anexar ao e-mail...')
 
-    const tipoDocumento = rotulosModeloDeclaracao[modeloAtivo] || 'Declaração'
-    const nomePessoa =
-      modeloAtivo === MODELO_DECLARACAO_ABENDI
-        ? normalizarTexto(formularioComprovacao.nomeProfissional)
-        : normalizarTexto(formularioTreinamento.nomeAluno)
-    const nomeArquivoPdf = criarNomeArquivoPdf({ tipoDocumento, nomePessoa })
-    const anexoPrincipal =
-      (await gerarAnexoPdfVisualBase64({ nomeArquivo: nomeArquivoPdf })) ??
-      gerarAnexoPdfBase64({
-        nomeArquivo: nomeArquivoPdf,
-        titulo: preview.titulo,
-        subtitulo: '',
-        linhasCabecalho: preview.blocoInstitucional,
-        paragrafos: preview.paragrafos,
-        localData: preview.localDataEmissao,
-        rodapeLinhas: preview.rodapeLinhas,
+    try {
+      const {
+        documentoEmitido,
+        tipoDocumento,
+        nomePessoa,
+        nomeDocumento,
+        nomeArquivoPdf,
+        caminhoPdf,
+        usandoPastaTemporaria,
+        anexoPrincipal,
+      } = await gerarDocumentoDeclaracaoOficial('enviar_email')
+
+      onAbrirEnvioEmail({
+        documentoEmitidoId: documentoEmitido.id,
+        tipoDocumento,
+        nomeDocumento,
+        nomePessoa,
+        destinatarioEmail: normalizarTexto(formularioAtivo?.origemProgramacaoResumo?.email),
+        assuntoSugerido: criarAssuntoSugeridoEmail({ tipoDocumento, nomePessoa }),
+        mensagemSugerida: criarMensagemSugeridaEmail({ tipoDocumento, nomePessoa }),
+        nomeArquivoPdf,
+        anexoPrincipal,
       })
-    const documentoEmitido = await registrarDocumentoEmitido({
-      tipo: tipoDocumento,
-      aluno: nomePessoa,
-      nomeDocumento: preview.titulo || tipoDocumento,
-      nomeArquivoPdf,
-      anexoPrincipal,
-      origem: 'declaracoes',
-    })
 
-    onAbrirEnvioEmail({
-      documentoEmitidoId: documentoEmitido.id,
-      tipoDocumento,
-      nomeDocumento: preview.titulo || tipoDocumento,
-      nomePessoa,
-      destinatarioEmail: normalizarTexto(formularioAtivo?.origemProgramacaoResumo?.email),
-      assuntoSugerido: criarAssuntoSugeridoEmail({ tipoDocumento, nomePessoa }),
-      mensagemSugerida: criarMensagemSugeridaEmail({ tipoDocumento, nomePessoa }),
-      nomeArquivoPdf,
-      anexoPrincipal,
-    })
+      setMensagem(
+        usandoPastaTemporaria
+          ? `PDF salvo em pasta temporária: ${caminhoPdf}.`
+          : `PDF salvo com sucesso em ${caminhoPdf}.`,
+      )
+    } catch (erro) {
+      setMensagem(erro?.message || 'Não foi possível preparar o PDF da declaração para e-mail.')
+    }
   }
 
   function handleTrocarMesSelecaoDatas(direcao) {
@@ -1061,6 +1177,16 @@ export default function TelaDeclaracoes({
               </div>
 
               <label className="grid min-w-0 gap-2">
+                <span className="text-sm font-semibold text-[#4B5563]">Buscar programação</span>
+                <input
+                  value={filtroProgramacao}
+                  onChange={(e) => setFiltroProgramacao(e.target.value)}
+                  className={inputClass}
+                  placeholder="Aluno, curso, subnível ou data"
+                />
+              </label>
+
+              <label className="grid min-w-0 gap-2">
                 <span className="text-sm font-semibold text-[#4B5563]">
                   Escolher programação
                 </span>
@@ -1070,12 +1196,17 @@ export default function TelaDeclaracoes({
                   className={inputClass}
                 >
                   <option value="">Preenchimento manual</option>
-                  {programacoesDisponiveis.map((programacao) => (
+                  {programacoesFiltradas.map((programacao) => (
                     <option key={programacao.grupoId} value={programacao.grupoId}>
                       {getRotuloSelecaoProgramacao(programacao)}
                     </option>
                   ))}
                 </select>
+                <span className="text-sm text-[#767676]">
+                  {filtroProgramacao
+                    ? `${programacoesFiltradas.length} programação(ões) encontrada(s).`
+                    : `Mostrando as 30 programações mais recentes de ${programacoesDisponiveis.length} no total.`}
+                </span>
               </label>
 
               {resumoOrigemAplicada ? (
@@ -1274,13 +1405,20 @@ export default function TelaDeclaracoes({
               ) : null}
               <button
                 type="button"
+                onClick={handleSalvarPdfDeclaracao}
+                className={botaoSecundarioClass}
+              >
+                Salvar PDF
+              </button>
+              <button type="button" onClick={handleImprimirDeclaracao} className={botaoPrimarioClass}>
+                Imprimir
+              </button>
+              <button
+                type="button"
                 onClick={handleAbrirEnvioEmailDeclaracao}
                 className={botaoSecundarioClass}
               >
                 Enviar por e-mail
-              </button>
-              <button type="button" onClick={handleEmitirPdf} className={botaoPrimarioClass}>
-                Emitir PDF (imprimir)
               </button>
             </div>
           </div>

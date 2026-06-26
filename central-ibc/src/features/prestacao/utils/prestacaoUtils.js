@@ -169,7 +169,7 @@ function getDateObject(data) {
 
 function isCampoFinanceiroAplicavel(linha, campo, origemProgramacao) {
   if (campo === 'diarias') {
-    return linha.ehTreinamento || linha.ehProva
+    return linha.ehTreinamento
   }
 
   if (campo === 'hospedagem') {

@@ -87,26 +87,103 @@ function criarCanvasPagina(canvasOrigem, yOrigem, alturaOrigem) {
   return canvasPagina
 }
 
-export async function gerarAnexoPdfVisualBase64({
-  nomeArquivo = 'documento.pdf',
-  seletor = '.ibc-declaracao-documento-surface',
+function aplicarEstilosTextoExportacao(textarea, containerTexto) {
+  const estilos = window.getComputedStyle(textarea)
+
+  containerTexto.style.whiteSpace = 'pre-wrap'
+  containerTexto.style.wordBreak = 'break-word'
+  containerTexto.style.minHeight = estilos.minHeight
+  containerTexto.style.fontFamily = estilos.fontFamily
+  containerTexto.style.fontSize = estilos.fontSize
+  containerTexto.style.fontWeight = estilos.fontWeight
+  containerTexto.style.lineHeight = estilos.lineHeight
+  containerTexto.style.letterSpacing = estilos.letterSpacing
+  containerTexto.style.color = estilos.color
+  containerTexto.style.textAlign = estilos.textAlign
+  containerTexto.style.padding = '0'
+  containerTexto.style.margin = '0'
+}
+
+function substituirTextareasPorTextoEstatico(elementoOriginal, clone) {
+  const textareasOriginais = elementoOriginal.querySelectorAll('textarea')
+  const textareasClone = clone.querySelectorAll('textarea')
+
+  textareasClone.forEach((textareaClone, indice) => {
+    const textareaOriginal = textareasOriginais[indice]
+    const containerTexto = document.createElement('div')
+
+    aplicarEstilosTextoExportacao(textareaOriginal ?? textareaClone, containerTexto)
+    containerTexto.textContent = textareaOriginal?.value ?? textareaClone.value ?? ''
+    textareaClone.replaceWith(containerTexto)
+  })
+}
+
+export function criarCloneDocumentoExportacao({
+  seletor = '.ibc-declaracao-documento-print',
+  classePortal = 'ibc-declaracao-documento-print-portal',
 } = {}) {
   if (typeof document === 'undefined') {
     return null
   }
 
-  const elemento = document.querySelector(seletor)
+  const elementoOriginal = document.querySelector(seletor)
 
-  if (!elemento) {
+  if (!elementoOriginal) {
     return null
   }
 
-  const canvas = await html2canvas(elemento, {
+  const portal = document.createElement('div')
+  portal.className = classePortal
+  portal.setAttribute('aria-hidden', 'true')
+  portal.style.position = 'fixed'
+  portal.style.left = '-20000px'
+  portal.style.top = '0'
+  portal.style.width = '210mm'
+  portal.style.padding = '0'
+  portal.style.margin = '0'
+  portal.style.background = '#ffffff'
+  portal.style.zIndex = '-1'
+
+  const clone = elementoOriginal.cloneNode(true)
+  substituirTextareasPorTextoEstatico(elementoOriginal, clone)
+  portal.appendChild(clone)
+  document.body.appendChild(portal)
+
+  const elementoCaptura =
+    clone.querySelector('.ibc-declaracao-documento-surface') ?? clone
+
+  return {
+    portal,
+    clone,
+    elementoCaptura,
+    limpar: () => portal.remove(),
+  }
+}
+
+export async function gerarAnexoPdfVisualBase64({
+  nomeArquivo = 'documento.pdf',
+  seletor = '.ibc-declaracao-documento-print',
+} = {}) {
+  if (typeof document === 'undefined') {
+    return null
+  }
+
+  const cloneExportacao = criarCloneDocumentoExportacao({ seletor })
+
+  if (!cloneExportacao?.elementoCaptura) {
+    return null
+  }
+
+  const canvas = await html2canvas(cloneExportacao.elementoCaptura, {
     backgroundColor: '#ffffff',
     scale: 2,
     useCORS: true,
     allowTaint: true,
     logging: false,
+    width: cloneExportacao.elementoCaptura.scrollWidth,
+    height: cloneExportacao.elementoCaptura.scrollHeight,
+    windowWidth: cloneExportacao.elementoCaptura.scrollWidth,
+    windowHeight: cloneExportacao.elementoCaptura.scrollHeight,
   })
 
   const doc = new jsPDF({
@@ -137,6 +214,7 @@ export async function gerarAnexoPdfVisualBase64({
 
   const arrayBuffer = doc.output('arraybuffer')
   const base64 = arrayBufferParaBase64(arrayBuffer)
+  cloneExportacao.limpar()
 
   return {
     nomeArquivo,

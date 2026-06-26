@@ -215,6 +215,18 @@ export default function App() {
             estado: 'salvo',
             mensagem: 'Agenda salva. Aviso por e-mail enviado.',
           }))
+        } else {
+          const mensagensPorMotivo = {
+            sem_destinatario: 'Agenda salva. Aviso automático não enviado: e-mail da IBC não configurado.',
+            sem_alteracoes: 'Agenda salva. Nenhuma alteração relevante para aviso automático.',
+          }
+          setStatusPersistenciaProgramacao((atual) => ({
+            ...atual,
+            estado: 'salvo',
+            mensagem:
+              mensagensPorMotivo[retorno.motivo] ||
+              'Agenda salva. Aviso automático não foi enviado.',
+          }))
         }
       } catch (erro) {
         setStatusPersistenciaProgramacao((atual) => ({
@@ -229,7 +241,7 @@ export default function App() {
         agendaPendenteAvisoProgramacaoRef.current = null
         timeoutAvisoProgramacaoRef.current = null
       }
-    }, 8000)
+    }, 1500)
   }
 
   function handleAbrir(destino) {
@@ -430,6 +442,7 @@ export default function App() {
         )}
         {tela === 'prestacao' && (
           <TelaPrestacao
+            key={`prestacao:${prestacaoContexto.origem}:${prestacaoContexto.grupoIdProgramacao || 'manual'}`}
             onVoltar={handleVoltarPrestacao}
             onVoltarProgramacao={() => setTela('programacao')}
             agendaMensal={agendaMensal}
@@ -446,6 +459,7 @@ export default function App() {
         )}
         {tela === 'declaracoes' && (
           <TelaDeclaracoes
+            key={`declaracoes:${declaracaoContexto.origem}:${declaracaoContexto.grupoIdProgramacao || 'manual'}`}
             onVoltar={handleVoltarDeclaracoes}
             agendaMensal={agendaMensal}
             programacaoInicialResumo={declaracaoContexto.programacaoResumo}

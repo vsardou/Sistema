@@ -31,6 +31,8 @@ function formatarDataHora(valor) {
 }
 
 function getStatusEnvio(documento) {
+  if (documento.statusDocumento === 'enviado') return 'Enviado'
+  if (documento.statusDocumento === 'erro') return 'Erro'
   if (documento.statusEnvio === 'enviado') return 'Enviado'
   if (documento.statusEnvio === 'erro') return 'Erro no envio'
   return 'Não enviado'
@@ -199,8 +201,12 @@ export default function TelaModelos({ onVoltar, onAbrirEnvioEmail }) {
                   <p className="mt-2 break-all text-sm font-semibold text-[#374151]">
                     {item.nomeArquivoPdf}
                   </p>
+                  {item.caminhoPdf ? (
+                    <p className="mt-1 break-all text-xs text-[#64748B]">{item.caminhoPdf}</p>
+                  ) : null}
                   <p className="mt-1 text-sm text-[#4B5563]">
                     Emitido em {formatarDataHora(item.emitidoEm)}
+                    {item.acaoGeradora ? ` | Ação: ${item.acaoGeradora}` : ''}
                     {item.emailDestinatario
                       ? ` | Destinatário: ${item.emailDestinatario}`
                       : ' | Sem envio registrado'}
@@ -210,7 +216,9 @@ export default function TelaModelos({ onVoltar, onAbrirEnvioEmail }) {
                 <div className="flex flex-col gap-2 sm:flex-row xl:items-center">
                   <button
                     type="button"
-                    onClick={() => abrirPdfDocumentoEmitido(item)}
+                    onClick={() => {
+                      void abrirPdfDocumentoEmitido(item)
+                    }}
                     className={botaoPrimarioClass}
                   >
                     Abrir PDF

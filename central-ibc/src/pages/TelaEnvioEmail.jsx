@@ -119,6 +119,8 @@ export default function TelaEnvioEmail({ onVoltar, contextoEmail = null }) {
         enviadoPorEmail: true,
         emailDestinatario: destinatarioEmail,
         enviadoEm: new Date().toISOString(),
+        acaoGeradora: 'enviar_email',
+        statusDocumento: 'enviado',
         statusEnvio: 'enviado',
         mensagemEnvio: retorno?.mensagem || 'E-mail enviado com sucesso.',
       })
@@ -129,6 +131,8 @@ export default function TelaEnvioEmail({ onVoltar, contextoEmail = null }) {
         enviadoPorEmail: false,
         emailDestinatario: destinatarioEmail,
         enviadoEm: new Date().toISOString(),
+        acaoGeradora: 'enviar_email',
+        statusDocumento: 'erro',
         statusEnvio: 'erro',
         mensagemEnvio: erro?.message || 'Erro no envio do e-mail.',
       })

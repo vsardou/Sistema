@@ -38,8 +38,16 @@ import {
   criarMensagemSugeridaEmail,
   criarNomeArquivoPdf,
 } from '../features/email/utils/emailComposer'
-import { gerarAnexoPdfBase64, gerarAnexoPdfVisualBase64 } from '../features/email/utils/pdfUtils'
+import {
+  criarCloneDocumentoExportacao,
+  gerarAnexoPdfVisualBase64,
+} from '../features/email/utils/pdfUtils'
 import { registrarDocumentoEmitido } from '../features/documentos/utils/documentosEmitidos'
+import {
+  abrirUltimoPdfOficial,
+  abrirCaminhoSistema,
+  salvarPdfOficial,
+} from '../features/documentos/utils/documentosOficiais'
 
 const resumoFinanceiroInicial = {
   subtotalDiarias: 0,
@@ -448,19 +456,42 @@ export default function TelaPrestacao({
   onVoltar,
   onVoltarProgramacao,
   agendaMensal,
-  grupoIdProgramacaoInicial,
-  programacaoInicialResumo,
+  grupoIdProgramacaoInicial = null,
+  programacaoInicialResumo = null,
   onAtualizarProgramacaoOrigem = null,
-  onAbrirProgramacaoEdicao = null,
   onAbrirEnvioEmail = null,
 }) {
+  const [filtroProgramacao, setFiltroProgramacao] = useState('')
   const programacoesDisponiveis = useMemo(
     () =>
       agruparProgramacoesPorGrupo(agendaMensal).sort(
-        (a, b) => a.dataInicial.localeCompare(b.dataInicial) || a.aluno.localeCompare(b.aluno),
+        (a, b) =>
+          b.dataFinal.localeCompare(a.dataFinal) ||
+          b.dataInicial.localeCompare(a.dataInicial) ||
+          a.aluno.localeCompare(b.aluno),
       ),
     [agendaMensal],
   )
+
+  const programacoesFiltradas = useMemo(() => {
+    const filtro = filtroProgramacao.toLowerCase().trim()
+    const lista = !filtro
+      ? programacoesDisponiveis
+      : programacoesDisponiveis.filter((programacao) =>
+          [
+            programacao.aluno,
+            programacao.tipoTreinamento,
+            programacao.subnivel,
+            programacao.dataInicial,
+            programacao.dataFinal,
+          ]
+            .join(' ')
+            .toLowerCase()
+            .includes(filtro),
+        )
+
+    return filtro ? lista : lista.slice(0, 30)
+  }, [filtroProgramacao, programacoesDisponiveis])
 
   const programacoesPorGrupo = useMemo(
     () => new Map(programacoesDisponiveis.map((programacao) => [programacao.grupoId, programacao])),
@@ -485,15 +516,7 @@ export default function TelaPrestacao({
   const [anoSelecao, setAnoSelecao] = useState(mesAnoInicial.ano)
   const textoModeloPrestacaoAnteriorRef = useRef('')
 
-  const programacaoSelecionada =
-    grupoIdSelecionado === OPCAO_PRESTACAO_MANUAL
-      ? criarProgramacaoManualPrestacao()
-      : (programacoesPorGrupo.get(grupoIdSelecionado) ?? null)
-  const origemInicialNaoEncontrada = Boolean(
-    grupoIdProgramacaoInicial &&
-      grupoIdSelecionado === grupoIdProgramacaoInicial &&
-      !programacaoSelecionada,
-  )
+  const origemInicialNaoEncontrada = false
 
   const origemProgramacao = prestacao?.origemProgramacao ?? null
   const fechamento = prestacao?.fechamento ?? null
@@ -516,10 +539,25 @@ export default function TelaPrestacao({
       return () => window.clearTimeout(timeoutSemPreview)
     }
 
-    const previewClone = previewOriginal.cloneNode(true)
-    previewClone.classList.add('ibc-declaracao-documento-print-portal')
-    previewClone.setAttribute('aria-hidden', 'true')
-    body.appendChild(previewClone)
+    const cloneExportacao = criarCloneDocumentoExportacao()
+    const previewClone = cloneExportacao?.clone ?? previewOriginal.cloneNode(true)
+
+    if (!cloneExportacao) {
+      previewClone.classList.add('ibc-declaracao-documento-print-portal')
+      previewClone.setAttribute('aria-hidden', 'true')
+      body.appendChild(previewClone)
+    } else {
+      cloneExportacao.portal.style.left = '0'
+      cloneExportacao.portal.style.top = '0'
+      cloneExportacao.portal.style.zIndex = '99999'
+      cloneExportacao.portal.style.width = '100vw'
+      cloneExportacao.portal.style.height = '100vh'
+      cloneExportacao.portal.style.display = 'flex'
+      cloneExportacao.portal.style.alignItems = 'flex-start'
+      cloneExportacao.portal.style.justifyContent = 'center'
+      cloneExportacao.portal.style.overflow = 'hidden'
+      cloneExportacao.portal.style.background = '#ffffff'
+    }
 
     function ajustarEscalaA4() {
       const superficie = previewClone.querySelector('.ibc-declaracao-documento-surface')
@@ -535,7 +573,8 @@ export default function TelaPrestacao({
       const rect = superficie.getBoundingClientRect()
       const larguraAtual = rect.width || superficie.scrollWidth || 1
       const alturaAtual = rect.height || superficie.scrollHeight || 1
-      const escalaCalculada = Math.min(1, larguraUtilA4Px / larguraAtual, alturaUtilA4Px / alturaAtual)
+      const escalaLimite = Math.min(larguraUtilA4Px / larguraAtual, alturaUtilA4Px / alturaAtual)
+      const escalaCalculada = Math.min(1.15, escalaLimite)
       const escala = Number.isFinite(escalaCalculada) ? Math.max(0.1, escalaCalculada) : 1
 
       body.style.setProperty('--ibc-print-scale', escala.toFixed(4))
@@ -547,7 +586,11 @@ export default function TelaPrestacao({
     const handleAfterPrint = () => {
       body.classList.remove(classeImpressao)
       body.style.removeProperty('--ibc-print-scale')
-      previewClone.remove()
+      if (cloneExportacao) {
+        cloneExportacao.limpar()
+      } else {
+        previewClone.remove()
+      }
       setImpressaoAtiva(false)
     }
 
@@ -563,7 +606,11 @@ export default function TelaPrestacao({
       window.removeEventListener('afterprint', handleAfterPrint)
       body.classList.remove(classeImpressao)
       body.style.removeProperty('--ibc-print-scale')
-      previewClone.remove()
+      if (cloneExportacao) {
+        cloneExportacao.limpar()
+      } else {
+        previewClone.remove()
+      }
     }
   }, [impressaoAtiva])
 
@@ -727,13 +774,17 @@ export default function TelaPrestacao({
   }
 
   function handleAbrirProgramacaoOrigem() {
-    const origem = origemProgramacao ?? programacaoInicialResumo
+    setMensagem('Abrindo a última programação mensal salva...')
 
-    if (!onAbrirProgramacaoEdicao || !origem?.grupoId) {
-      return
-    }
-
-    onAbrirProgramacaoEdicao(origem.grupoId, origem.dataInicial)
+    abrirUltimoPdfOficial('programacoes')
+      .then((caminho) => {
+        setMensagem(`Última programação mensal aberta: ${caminho}`)
+      })
+      .catch((erro) => {
+        setMensagem(
+          erro?.message || 'Não foi possível abrir a última programação mensal salva.',
+        )
+      })
   }
 
   function handleAtualizarParametroPrestacao(campo, valor) {
@@ -965,50 +1016,38 @@ export default function TelaPrestacao({
     setMensagem('Prestação salva.')
   }
 
-  function handleEmitirPdf() {
-    if (typeof window === 'undefined' || !prestacao || !origemProgramacao) {
-      return
-    }
-
-    setImpressaoAtiva(true)
-  }
-
-  async function gerarDocumentoEmitidoPrestacao() {
+  async function gerarDocumentoEmitidoPrestacao(acaoGeradora) {
     const tipoDocumento = 'Prestação de contas'
     const nomePessoa = normalizarTexto(origemProgramacao.aluno)
     const nomeDocumento = getTituloPrestacaoDocumento(origemProgramacao)
     const nomeArquivoPdf = criarNomeArquivoPdf({ tipoDocumento, nomePessoa })
-    const paragrafos = extrairParagrafosTexto(prestacao.parametros?.observacoes)
-    const paragrafosBase =
-      paragrafos.length > 0
-        ? paragrafos
-        : [
-            `Prestação de contas referente ao treinamento de ${nomePessoa || 'NOME DO ALUNO'}, considerando os ${formatarDiasPrestacaoDocumento(linhasPrestacao.filter((linha) => linha.visivel).map((linha) => linha.data))}.`,
-          ]
     const dataEmissao =
       prestacao.parametros?.dataEmissao || new Date().toISOString().slice(0, 10)
     const instituicao = carregarCamposInstitucionaisDeclaracao()
     const cidadeEmissao =
       prestacao.parametros?.cidadeEmissao || instituicao.cidadePadraoTreinamento
     const localData = `${cidadeEmissao}, ${formatarDataExtensa(dataEmissao)}.`
-    const anexoPrincipal =
-      (await gerarAnexoPdfVisualBase64({ nomeArquivo: nomeArquivoPdf })) ??
-      gerarAnexoPdfBase64({
-        nomeArquivo: nomeArquivoPdf,
-        titulo: nomeDocumento,
-        subtitulo: 'Prestação de contas',
-        linhasCabecalho: instituicao.blocoInstitucional,
-        paragrafos: paragrafosBase,
-        localData,
-        rodapeLinhas: instituicao.rodapeLinhas,
-      })
+    void localData
+    const anexoPrincipal = await gerarAnexoPdfVisualBase64({ nomeArquivo: nomeArquivoPdf })
+
+    if (!anexoPrincipal?.base64) {
+      throw new Error('Não foi possível renderizar o PDF visual da prestação.')
+    }
+    const arquivoSalvo = await salvarPdfOficial({
+      nomeArquivo: nomeArquivoPdf,
+      base64: anexoPrincipal?.base64,
+      categoria: 'prestacoes',
+    })
     const documentoEmitido = await registrarDocumentoEmitido({
       tipo: tipoDocumento,
       aluno: nomePessoa,
       nomeDocumento,
-      nomeArquivoPdf,
+      nomeArquivoPdf: arquivoSalvo.nomeArquivo,
+      caminhoPdf: arquivoSalvo.caminhoArquivo,
       anexoPrincipal,
       origem: 'prestacao',
+      acaoGeradora,
+      statusDocumento: 'salvo',
     })
 
     return {
@@ -1016,8 +1055,13 @@ export default function TelaPrestacao({
       tipoDocumento,
       nomeDocumento,
       nomePessoa,
-      nomeArquivoPdf,
-      anexoPrincipal,
+      nomeArquivoPdf: arquivoSalvo.nomeArquivo,
+      caminhoPdf: arquivoSalvo.caminhoArquivo,
+      usandoPastaTemporaria: arquivoSalvo.usandoPastaTemporaria,
+      anexoPrincipal: {
+        ...anexoPrincipal,
+        nomeArquivo: arquivoSalvo.nomeArquivo,
+      },
     }
   }
 
@@ -1029,10 +1073,31 @@ export default function TelaPrestacao({
     setMensagem('Gerando PDF e salvando no histórico...')
 
     try {
-      await gerarDocumentoEmitidoPrestacao()
-      setMensagem('PDF da prestação salvo em Documentos emitidos.')
-    } catch {
-      setMensagem('Não foi possível salvar o PDF da prestação no histórico.')
+      const { caminhoPdf, usandoPastaTemporaria } = await gerarDocumentoEmitidoPrestacao('salvar')
+      await abrirCaminhoSistema(caminhoPdf)
+      setMensagem(
+        usandoPastaTemporaria
+          ? `PDF salvo e aberto a partir da pasta temporária: ${caminhoPdf}.`
+          : `PDF salvo e aberto: ${caminhoPdf}`,
+      )
+    } catch (erro) {
+      setMensagem(erro?.message || 'Não foi possível salvar o PDF da prestação.')
+    }
+  }
+
+  async function handleEmitirPdf() {
+    if (typeof window === 'undefined' || !prestacao || !origemProgramacao) {
+      return
+    }
+
+    setMensagem('Salvando PDF oficial da prestação antes de imprimir...')
+
+    try {
+      const { caminhoPdf } = await gerarDocumentoEmitidoPrestacao('imprimir')
+      setMensagem(`PDF salvo com sucesso em ${caminhoPdf}. Abrindo impressão...`)
+      setImpressaoAtiva(true)
+    } catch (erro) {
+      setMensagem(erro?.message || 'Não foi possível salvar o PDF da prestação para impressão.')
     }
   }
 
@@ -1041,28 +1106,34 @@ export default function TelaPrestacao({
       return
     }
 
-    setMensagem('Gerando PDF fiel ao documento para anexar ao e-mail...')
+    setMensagem('Salvando PDF oficial da prestação para anexar ao e-mail...')
 
-    const {
-      documentoEmitido,
-      tipoDocumento,
-      nomeDocumento,
-      nomePessoa,
-      nomeArquivoPdf,
-      anexoPrincipal,
-    } = await gerarDocumentoEmitidoPrestacao()
+    try {
+      const {
+        documentoEmitido,
+        tipoDocumento,
+        nomeDocumento,
+        nomePessoa,
+        nomeArquivoPdf,
+        anexoPrincipal,
+        caminhoPdf,
+      } = await gerarDocumentoEmitidoPrestacao('enviar_email')
 
-    onAbrirEnvioEmail({
-      documentoEmitidoId: documentoEmitido.id,
-      tipoDocumento,
-      nomeDocumento,
-      nomePessoa,
-      destinatarioEmail: normalizarTexto(origemProgramacao.email),
-      assuntoSugerido: criarAssuntoSugeridoEmail({ tipoDocumento, nomePessoa }),
-      mensagemSugerida: criarMensagemSugeridaEmail({ tipoDocumento, nomePessoa }),
-      nomeArquivoPdf,
-      anexoPrincipal,
-    })
+      onAbrirEnvioEmail({
+        documentoEmitidoId: documentoEmitido.id,
+        tipoDocumento,
+        nomeDocumento,
+        nomePessoa,
+        destinatarioEmail: normalizarTexto(origemProgramacao.email),
+        assuntoSugerido: criarAssuntoSugeridoEmail({ tipoDocumento, nomePessoa }),
+        mensagemSugerida: criarMensagemSugeridaEmail({ tipoDocumento, nomePessoa }),
+        nomeArquivoPdf,
+        anexoPrincipal,
+      })
+      setMensagem(`PDF salvo com sucesso em ${caminhoPdf}.`)
+    } catch (erro) {
+      setMensagem(erro?.message || 'Não foi possível preparar o PDF da prestação para e-mail.')
+    }
   }
 
   return (
@@ -1099,6 +1170,16 @@ export default function TelaPrestacao({
         ) : null}
 
         <label className="mt-6 grid min-w-0 gap-2">
+          <span className="text-sm font-semibold text-[#4B5563]">Buscar programação</span>
+          <input
+            value={filtroProgramacao}
+            onChange={(e) => setFiltroProgramacao(e.target.value)}
+            className="min-w-0 w-full rounded-[20px] border border-[#D9D9D9] bg-white px-4 py-4 text-base text-[#222222]"
+            placeholder="Aluno, curso, subnível ou data"
+          />
+        </label>
+
+        <label className="mt-6 grid min-w-0 gap-2">
           <span className="text-sm font-semibold text-[#4B5563]">
             Programação
           </span>
@@ -1109,13 +1190,28 @@ export default function TelaPrestacao({
           >
             <option value={OPCAO_PRESTACAO_MANUAL}>Prestação manual (do zero)</option>
             <option value="">Selecione uma programação</option>
-            {programacoesDisponiveis.map((programacao) => (
+            {programacoesFiltradas.map((programacao) => (
               <option key={programacao.grupoId} value={programacao.grupoId}>
                 {getRotuloSelecaoProgramacao(programacao)}
               </option>
             ))}
           </select>
+          <span className="text-sm text-[#767676]">
+            {filtroProgramacao
+              ? `${programacoesFiltradas.length} programação(ões) encontrada(s).`
+              : `Mostrando as 30 programações mais recentes de ${programacoesDisponiveis.length} no total.`}
+          </span>
         </label>
+
+        <div className="mt-4 flex flex-wrap gap-3">
+          <button
+            type="button"
+            onClick={handleAbrirProgramacaoOrigem}
+            className="rounded-[18px] border border-[#D9D9D9] bg-white px-4 py-3 font-semibold text-[#222222] transition-colors hover:bg-[#FCFCFC]"
+          >
+            Abrir programação mensal
+          </button>
+        </div>
 
         {!prestacao || !origemProgramacao ? (
           <div className="mt-6 rounded-[20px] border border-dashed border-[#D9D9D9] bg-[#FAFAFA] px-4 py-5 text-sm text-[#767676]">
@@ -1133,20 +1229,11 @@ export default function TelaPrestacao({
                   Selecione outra programação para iniciar o fechamento ou volte para revisar a
                   programação.
                 </p>
-                {onAbrirProgramacaoEdicao && programacaoInicialResumo?.grupoId ? (
-                  <button
-                    type="button"
-                    onClick={handleAbrirProgramacaoOrigem}
-                    className="mt-4 rounded-[18px] border border-[#D9D9D9] bg-white px-4 py-3 font-semibold text-[#222222] transition-colors hover:bg-[#FCFCFC]"
-                  >
-                    Conferir origem
-                  </button>
-                ) : null}
               </>
             ) : (
               <>
-                Abra a prestação a partir da programação ou selecione um treinamento existente para
-                iniciar.
+                Preenchimento manual ativo. A prestação abre sem carregar automaticamente a última
+                programação. Selecione uma origem apenas quando quiser puxar os dados.
               </>
             )}
           </div>
@@ -1320,7 +1407,7 @@ export default function TelaPrestacao({
                       onClick={handleSalvarPdfHistorico}
                       className={botaoSecundarioClass}
                     >
-                      Salvar PDF no histórico
+                      Salvar PDF
                     </button>
                     <button
                       type="button"
@@ -1330,7 +1417,7 @@ export default function TelaPrestacao({
                       Enviar por e-mail
                     </button>
                     <button type="button" onClick={handleEmitirPdf} className={botaoPrimarioClass}>
-                      Imprimir PDF
+                      Imprimir
                     </button>
                   </div>
                 </div>

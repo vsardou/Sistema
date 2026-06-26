@@ -1,6 +1,6 @@
 import { jsPDF } from 'jspdf'
 import { diasSemana } from '../constants'
-import { criarChaveData, formatarDataCurta, formatarMesAno, getInfoMes } from './dateUtils'
+import { criarChaveData, formatarMesAno, getInfoMes } from './dateUtils'
 import { getContagemPrincipal, getProgramacoesDoDia } from './programacaoUtils'
 
 const CORES = {
@@ -83,24 +83,6 @@ function tagsDoDia(programacao, data) {
   }
 
   return tags.length > 0 ? tags : ['T']
-}
-
-function descricaoTagsDoDia(programacao, data) {
-  const descricoes = []
-
-  if (programacao.diasTreinamento?.includes(data)) {
-    descricoes.push('treinamento')
-  }
-
-  if (programacao.diasEmProva?.includes(data)) {
-    descricoes.push(programacao.aluguelAparelho ? 'prova com aparelho' : 'prova')
-  }
-
-  if (programacao.diasHospedagem?.includes(data)) {
-    descricoes.push('hospedagem')
-  }
-
-  return descricoes.length > 0 ? descricoes.join(', ') : 'treinamento'
 }
 
 function corProgramacao(programacao) {
@@ -290,102 +272,64 @@ function desenharCalendario(doc, diasCalendario) {
   })
 }
 
-function criarPaginaDetalhe(doc, { mes, ano, pagina }) {
-  doc.addPage('a4', 'portrait')
-  const largura = doc.internal.pageSize.getWidth()
-
-  setCorPreenchimento(doc, CORES.fundo)
-  doc.rect(0, 0, largura, doc.internal.pageSize.getHeight(), 'F')
-  setCorPreenchimento(doc, CORES.tinta)
-  doc.roundedRect(12, 10, largura - 24, 19, 3, 3, 'F')
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(14)
-  setCorTexto(doc, CORES.branco)
-  doc.text(`Detalhamento - ${formatarMesAno(mes, ano)}`, 18, 22)
-  doc.setFontSize(8)
-  doc.text(`Pagina ${pagina}`, largura - 18, 22, { align: 'right' })
-
-  return 39
+function nomeArquivoAgenda(mes, ano) {
+  return `agenda-ibc-${ano}-${String(mes).padStart(2, '0')}.pdf`
 }
 
-function garantirEspacoDetalhe(doc, contexto, y, alturaNecessaria) {
-  const alturaPagina = doc.internal.pageSize.getHeight()
+function ordenarMesesAgenda(agendaMensal = []) {
+  return [...agendaMensal].sort((a, b) => {
+    if (a.ano !== b.ano) {
+      return a.ano - b.ano
+    }
 
-  if (y + alturaNecessaria <= alturaPagina - 16) {
-    return y
-  }
-
-  contexto.pagina += 1
-  return criarPaginaDetalhe(doc, contexto)
-}
-
-function desenharDetalhamento(doc, { diasCalendario, mes, ano }) {
-  const diasComProgramacao = diasCalendario.filter((dia) => !dia.vazio && dia.programacoes.length > 0)
-
-  if (diasComProgramacao.length === 0) {
-    return
-  }
-
-  const contexto = { mes, ano, pagina: 2 }
-  let y = criarPaginaDetalhe(doc, contexto)
-  const margemX = 14
-  const larguraTexto = doc.internal.pageSize.getWidth() - margemX * 2
-
-  diasComProgramacao.forEach((dia) => {
-    const alturaCabecalhoDia = 10
-    y = garantirEspacoDetalhe(doc, contexto, y, alturaCabecalhoDia + 8)
-    setCorPreenchimento(doc, CORES.branco)
-    setCorLinha(doc, CORES.borda)
-    doc.roundedRect(margemX, y - 5.5, larguraTexto, 9, 2, 2, 'FD')
-    doc.setFont('helvetica', 'bold')
-    doc.setFontSize(10)
-    setCorTexto(doc, CORES.vermelho)
-    doc.text(formatarDataCurta(dia.data), margemX + 4, y)
-    doc.setFontSize(8)
-    setCorTexto(doc, CORES.textoSuave)
-    doc.text(`${dia.programacoes.length} item(ns)`, margemX + larguraTexto - 4, y, {
-      align: 'right',
-    })
-    y += 8
-
-    dia.programacoes.forEach((programacao) => {
-      const linhaPrincipal = `${normalizarTexto(programacao.aluno) || 'Aluno sem nome'} | ${
-        normalizarTexto(programacao.tipoTreinamento) || 'Treinamento'
-      } | ${descricaoTagsDoDia(programacao, dia.data)}`
-      const complemento = [
-        programacao.status === 'cancelado' ? 'Status: cancelado' : '',
-        normalizarTexto(programacao.observacoes)
-          ? `Obs.: ${normalizarTexto(programacao.observacoes)}`
-          : '',
-      ].filter(Boolean)
-      const linhas = [
-        ...doc.splitTextToSize(linhaPrincipal, larguraTexto - 16),
-        ...complemento.flatMap((item) => doc.splitTextToSize(item, larguraTexto - 16)),
-      ]
-      const altura = Math.max(10, linhas.length * 4.2 + 5)
-
-      y = garantirEspacoDetalhe(doc, contexto, y, altura + 2)
-      const cor = corProgramacao(programacao)
-      setCorPreenchimento(doc, CORES.branco)
-      setCorLinha(doc, CORES.borda)
-      doc.roundedRect(margemX + 4, y - 5, larguraTexto - 8, altura, 2, 2, 'FD')
-      setCorPreenchimento(doc, cor)
-      doc.roundedRect(margemX + 7, y - 1.8, 3.5, 3.5, 1, 1, 'F')
-      doc.setFont('helvetica', programacao.status === 'cancelado' ? 'italic' : 'normal')
-      doc.setFontSize(8.5)
-      setCorTexto(doc, CORES.tinta)
-      linhas.forEach((linha, indice) => {
-        doc.text(linha, margemX + 13, y + indice * 4.2)
-      })
-      y += altura + 3
-    })
-
-    y += 2
+    return a.mes - b.mes
   })
 }
 
-function nomeArquivoAgenda(mes, ano) {
-  return `agenda-ibc-${ano}-${String(mes).padStart(2, '0')}.pdf`
+function temProgramacaoNoMes(agendaDoMes) {
+  return (agendaDoMes?.programacoes ?? []).length > 0
+}
+
+function getMesesComProgramacaoAPartirDe({
+  agendaMensal = [],
+  agendaDoMes = null,
+  mes,
+  ano,
+}) {
+  const agendaOrdenada = ordenarMesesAgenda(agendaMensal)
+  const mesesComProgramacao = agendaOrdenada.filter((item) => temProgramacaoNoMes(item))
+
+  if (mesesComProgramacao.length === 0 && agendaDoMes) {
+    return [{ ...agendaDoMes, mes, ano }]
+  }
+
+  const indiceInicial = mesesComProgramacao.findIndex(
+    (item) => item.ano > ano || (item.ano === ano && item.mes >= mes),
+  )
+
+  if (indiceInicial >= 0) {
+    return mesesComProgramacao.slice(indiceInicial)
+  }
+
+  if (agendaDoMes && temProgramacaoNoMes(agendaDoMes)) {
+    return [{ ...agendaDoMes, mes, ano }]
+  }
+
+  return []
+}
+
+function nomeArquivoAgendaSequencial(mesesAgenda = []) {
+  const primeiroMes = mesesAgenda[0]
+
+  if (!primeiroMes) {
+    return 'agenda-ibc.pdf'
+  }
+
+  if (mesesAgenda.length === 1) {
+    return nomeArquivoAgenda(primeiroMes.mes, primeiroMes.ano)
+  }
+
+  return `agenda-ibc-${primeiroMes.ano}-${String(primeiroMes.mes).padStart(2, '0')}-em-diante.pdf`
 }
 
 function arrayBufferParaBase64(arrayBuffer) {
@@ -402,6 +346,7 @@ function arrayBufferParaBase64(arrayBuffer) {
 }
 
 export function gerarPdfAgendaMensal({
+  agendaMensal = [],
   agendaDoMes,
   mes,
   ano,
@@ -412,25 +357,60 @@ export function gerarPdfAgendaMensal({
     unit: 'mm',
     format: 'a4',
   })
-  const diasCalendario = montarDiasCalendario({ agendaDoMes, ano, mes })
-  const resumo = resumoDoMes(agendaDoMes)
   const emitidoEmFormatado = new Intl.DateTimeFormat('pt-BR', {
     dateStyle: 'short',
     timeStyle: 'short',
   }).format(emitidoEm)
-
-  desenharCabecalho(doc, {
+  const mesesAgenda = getMesesComProgramacaoAPartirDe({
+    agendaMensal,
+    agendaDoMes,
     mes,
     ano,
-    emitidoEm: emitidoEmFormatado,
-    resumo,
   })
-  desenharCalendario(doc, diasCalendario)
-  desenharDetalhamento(doc, { diasCalendario, mes, ano })
+
+  if (mesesAgenda.length === 0) {
+    const agendaFallback = agendaDoMes ?? { mes, ano, programacoes: [] }
+    const diasCalendario = montarDiasCalendario({ agendaDoMes: agendaFallback, ano, mes })
+    const resumo = resumoDoMes(agendaFallback)
+
+    desenharCabecalho(doc, {
+      mes,
+      ano,
+      emitidoEm: emitidoEmFormatado,
+      resumo,
+    })
+    desenharCalendario(doc, diasCalendario)
+
+    return {
+      doc,
+      nomeArquivo: nomeArquivoAgenda(mes, ano),
+    }
+  }
+
+  mesesAgenda.forEach((agendaMes, indice) => {
+    if (indice > 0) {
+      doc.addPage('a4', 'landscape')
+    }
+
+    const diasCalendario = montarDiasCalendario({
+      agendaDoMes: agendaMes,
+      ano: agendaMes.ano,
+      mes: agendaMes.mes,
+    })
+    const resumo = resumoDoMes(agendaMes)
+
+    desenharCabecalho(doc, {
+      mes: agendaMes.mes,
+      ano: agendaMes.ano,
+      emitidoEm: emitidoEmFormatado,
+      resumo,
+    })
+    desenharCalendario(doc, diasCalendario)
+  })
 
   return {
     doc,
-    nomeArquivo: nomeArquivoAgenda(mes, ano),
+    nomeArquivo: nomeArquivoAgendaSequencial(mesesAgenda),
   }
 }
 
@@ -462,5 +442,16 @@ export function gerarAnexoPdfAgendaMensal(opcoes = {}) {
     mimeType: 'application/pdf',
     base64: arrayBufferParaBase64(arrayBuffer),
     tamanhoBytes: arrayBuffer.byteLength,
+  }
+}
+
+export function gerarBase64PdfAgendaMensal(opcoes = {}) {
+  const { nomeArquivo, base64, tamanhoBytes } = gerarAnexoPdfAgendaMensal(opcoes)
+
+  return {
+    nomeArquivo,
+    mimeType: 'application/pdf',
+    base64,
+    tamanhoBytes,
   }
 }

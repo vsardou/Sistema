@@ -1,15 +1,16 @@
 const STORAGE_CHAVE_CONFIGURACAO = 'ibc.configuracao.sistema.v1'
 
 export const pastasSistemaIbc = [
-  { chave: 'dados', rotulo: 'Dados', caminhoRelativo: 'Dados' },
-  { chave: 'documentos', rotulo: 'Documentos', caminhoRelativo: 'Documentos' },
-  { chave: 'declaracoes', rotulo: 'Declarações', caminhoRelativo: 'Documentos/Declaracoes' },
-  { chave: 'prestacoes', rotulo: 'Prestações', caminhoRelativo: 'Documentos/Prestacoes' },
-  { chave: 'emails', rotulo: 'E-mails', caminhoRelativo: 'Documentos/Emails' },
-  { chave: 'backups', rotulo: 'Backups', caminhoRelativo: 'Backups' },
-  { chave: 'modelos', rotulo: 'Modelos', caminhoRelativo: 'Modelos' },
-  { chave: 'assinaturas', rotulo: 'Assinaturas', caminhoRelativo: 'Assinaturas' },
-  { chave: 'logs', rotulo: 'Logs', caminhoRelativo: 'Logs' },
+  { chave: 'dados', rotulo: 'Dados', caminhoRelativo: 'dados' },
+  { chave: 'documentos', rotulo: 'Documentos', caminhoRelativo: 'documentos' },
+  { chave: 'declaracoes', rotulo: 'Declarações', caminhoRelativo: 'documentos/declaracoes' },
+  { chave: 'prestacoes', rotulo: 'Prestações', caminhoRelativo: 'documentos/prestacoes' },
+  { chave: 'programacoes', rotulo: 'Programações', caminhoRelativo: 'documentos/programacoes' },
+  { chave: 'emails', rotulo: 'E-mails', caminhoRelativo: 'documentos/emails' },
+  { chave: 'backups', rotulo: 'Backups', caminhoRelativo: 'backups' },
+  { chave: 'modelos', rotulo: 'Modelos', caminhoRelativo: 'modelos' },
+  { chave: 'assinaturas', rotulo: 'Assinaturas', caminhoRelativo: 'assinaturas' },
+  { chave: 'logs', rotulo: 'Logs', caminhoRelativo: 'logs' },
 ]
 
 function normalizarTexto(valor) {
@@ -96,6 +97,29 @@ export async function prepararPastasCompartilhadas(pastaRaiz) {
     configuracao: {
       pasta_raiz: pastaRaizNormalizada,
     },
+  })
+}
+
+export async function garantirPastaBaseSistema() {
+  const configuracaoAtual = carregarConfiguracaoSistema()
+  const pastaExistente = normalizarTexto(configuracaoAtual?.pastaRaiz)
+
+  if (pastaExistente) {
+    return configuracaoAtual
+  }
+
+  const pastaSelecionada = await selecionarPastaRaizCompartilhada()
+
+  if (!pastaSelecionada) {
+    throw new Error('A pasta base do sistema ainda não foi configurada.')
+  }
+
+  const resultado = await prepararPastasCompartilhadas(pastaSelecionada)
+
+  return salvarConfiguracaoSistema({
+    pastaRaiz: resultado.pasta_raiz ?? pastaSelecionada,
+    computador: resultado.computador ?? '',
+    ultimoResultadoPreparacao: resultado,
   })
 }
 

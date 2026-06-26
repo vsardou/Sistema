@@ -39,9 +39,13 @@ import {
   salvarProgramacaoAgrupada,
 } from '../features/programacao/utils/programacaoUtils'
 import { criarResumoTreinamentoProgramacao } from '../features/programacao/utils/programacaoNormalization'
-import { abrirPdfAgendaMensal } from '../features/programacao/utils/programacaoPdf'
+import { gerarBase64PdfAgendaMensal } from '../features/programacao/utils/programacaoPdf'
 import { validarFormularioProgramacao } from '../features/programacao/utils/validation'
 import { carregarConfiguracaoOperacional } from '../features/configuracoes/configuracaoOperacional'
+import {
+  abrirCaminhoSistema,
+  salvarPdfOficial,
+} from '../features/documentos/utils/documentosOficiais'
 
 function criarGrupoIdProgramacao() {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
@@ -661,18 +665,29 @@ export default function TelaProgramacao({
     )
   }
 
-  function handleAbrirPdfAgenda() {
+  async function handleAbrirPdfAgenda() {
     setMensagemPdf('')
 
     try {
-      const nomeArquivo = abrirPdfAgendaMensal({
+      const pdfAgenda = gerarBase64PdfAgendaMensal({
+        agendaMensal,
         agendaDoMes,
         mes: mesAtual,
         ano: anoAtual,
       })
-      setMensagemPdf(`PDF da agenda aberto: ${nomeArquivo}`)
+      const arquivoSalvo = await salvarPdfOficial({
+        nomeArquivo: pdfAgenda.nomeArquivo,
+        base64: pdfAgenda.base64,
+        categoria: 'programacoes',
+      })
+
+      await abrirCaminhoSistema(arquivoSalvo.caminhoArquivo)
+      setMensagemPdf(`Programação atualizada aberta: ${arquivoSalvo.caminhoArquivo}`)
     } catch (erro) {
-      setMensagemPdf(erro?.message || 'Nao foi possivel abrir o PDF da agenda.')
+      setMensagemPdf(
+        erro?.message ||
+          'Não foi possível gerar e abrir a programação atualizada.',
+      )
     }
   }
 
@@ -720,7 +735,7 @@ export default function TelaProgramacao({
               onClick={handleAbrirPdfAgenda}
               className={botaoSecundarioClass}
             >
-              Abrir PDF mensal
+              Abrir última programação
             </button>
             <button
               type="button"

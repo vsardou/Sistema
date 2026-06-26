@@ -2,7 +2,11 @@ use base64::engine::general_purpose::{STANDARD, URL_SAFE, URL_SAFE_NO_PAD};
 use base64::Engine;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
+use tauri::Manager;
 use tauri_plugin_sql::{Migration, MigrationKind};
+
+const APP_VERSAO: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Deserialize)]
 struct ConfiguracaoPastas {
@@ -15,6 +19,39 @@ struct ResultadoPreparacaoPastas {
     computador: String,
     arquivos_criados: Vec<String>,
     pastas_criadas: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SalvarPdfOficialPayload {
+    nome_arquivo: String,
+    base64: String,
+    categoria: String,
+    pasta_raiz: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ResultadoSalvarPdfOficial {
+    pasta_raiz: String,
+    caminho_arquivo: String,
+    nome_arquivo: String,
+    categoria: String,
+    usando_pasta_temporaria: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AbrirCaminhoSistemaPayload {
+    caminho: String,
+    selecionar_arquivo: Option<bool>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ObterUltimoPdfOficialPayload {
+    categoria: String,
+    pasta_raiz: String,
 }
 
 #[derive(Deserialize)]
@@ -223,6 +260,24 @@ fn limpar_valor_env(valor: &str) -> String {
     valor.trim().trim_matches(['"', '\'']).to_string()
 }
 
+fn ler_variavel_configuracao_embutida(chave: &str) -> Option<String> {
+    let valor = match chave {
+        "EMAIL_PROVIDER" => option_env!("EMAIL_PROVIDER"),
+        "GMAIL_CLIENT_ID" => option_env!("GMAIL_CLIENT_ID"),
+        "GMAIL_CLIENT_SECRET" => option_env!("GMAIL_CLIENT_SECRET"),
+        "GMAIL_REFRESH_TOKEN" => option_env!("GMAIL_REFRESH_TOKEN"),
+        "GMAIL_SENDER_EMAIL" => option_env!("GMAIL_SENDER_EMAIL"),
+        _ => None,
+    }?;
+
+    let valor_limpo = limpar_valor_env(valor);
+    if valor_limpo.is_empty() {
+        None
+    } else {
+        Some(valor_limpo)
+    }
+}
+
 fn caminhos_env_possiveis() -> Vec<std::path::PathBuf> {
     let mut caminhos = Vec::new();
 
@@ -277,7 +332,7 @@ fn ler_variavel_configuracao(chave: &str) -> Option<String> {
         }
     }
 
-    None
+    ler_variavel_configuracao_embutida(chave)
 }
 
 fn gmail_configurado() -> bool {
@@ -310,6 +365,38 @@ fn quebrar_linhas(texto: &str, tamanho: usize) -> String {
 
 fn codificar_assunto_email(assunto: &str) -> String {
     format!("=?UTF-8?B?{}?=", STANDARD.encode(assunto.as_bytes()))
+}
+
+fn normalizar_quebras_linha_email(texto: &str) -> String {
+    normalizar_texto(texto).replace("\r\n", "\n").replace('\r', "\n")
+}
+
+fn escapar_html_simples(texto: &str) -> String {
+    texto.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+fn converter_mensagem_para_html(texto: &str) -> String {
+    let texto_normalizado = normalizar_quebras_linha_email(texto);
+    let paragrafos = texto_normalizado
+        .split("\n\n")
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(|paragrafo| {
+            format!(
+                "<p>{}</p>",
+                escapar_html_simples(paragrafo).replace('\n', "<br/>")
+            )
+        })
+        .collect::<Vec<_>>();
+
+    if paragrafos.is_empty() {
+        "<p></p>".to_string()
+    } else {
+        paragrafos.join("")
+    }
 }
 
 fn construir_email_mime(
@@ -355,7 +442,9 @@ fn construir_email_mime_com_opcoes(
             .map(|duracao| duracao.as_millis())
             .unwrap_or_default()
     );
-    let corpo_base64 = STANDARD.encode(mensagem.as_bytes());
+    let mensagem_normalizada = normalizar_quebras_linha_email(mensagem);
+    let corpo_html = converter_mensagem_para_html(&mensagem_normalizada);
+    let corpo_base64 = STANDARD.encode(corpo_html.as_bytes());
     let assunto_codificado = codificar_assunto_email(assunto);
     let mut linhas = vec![
         format!("From: {}", limpar_header_email(remetente_email)),
@@ -382,7 +471,7 @@ fn construir_email_mime_com_opcoes(
         format!("Content-Type: multipart/mixed; boundary=\"{separador}\""),
         String::new(),
         format!("--{separador}"),
-        "Content-Type: text/plain; charset=\"UTF-8\"".to_string(),
+        "Content-Type: text/html; charset=\"UTF-8\"".to_string(),
         "Content-Transfer-Encoding: base64".to_string(),
         String::new(),
         quebrar_linhas(&corpo_base64, 76),
@@ -1019,16 +1108,208 @@ fn nome_computador() -> String {
 
 fn subpastas_padrao() -> Vec<&'static str> {
     vec![
-        "Dados",
-        "Documentos",
-        "Documentos/Declaracoes",
-        "Documentos/Prestacoes",
-        "Documentos/Emails",
-        "Backups",
-        "Modelos",
-        "Assinaturas",
-        "Logs",
+        "dados",
+        "documentos",
+        "documentos/declaracoes",
+        "documentos/prestacoes",
+        "documentos/programacoes",
+        "documentos/emails",
+        "backups",
+        "modelos",
+        "assinaturas",
+        "logs",
     ]
+}
+
+fn ler_env_nao_vazio(chave: &str) -> Option<String> {
+    std::env::var(chave)
+        .ok()
+        .map(|valor| valor.trim().to_string())
+        .filter(|valor| !valor.is_empty())
+}
+
+fn resolver_pasta_raiz_oficial(
+    app: &tauri::AppHandle,
+    pasta_raiz_informada: &str,
+) -> Result<(PathBuf, bool), String> {
+    if let Some(pasta_env) = ler_env_nao_vazio("IBC_DATA_DIR") {
+        return Ok((PathBuf::from(pasta_env), false));
+    }
+
+    let pasta_informada = pasta_raiz_informada.trim();
+    if !pasta_informada.is_empty() {
+        return Ok((PathBuf::from(pasta_informada), false));
+    }
+
+    if let Ok(download_dir) = app.path().download_dir() {
+        return Ok((download_dir.join("Sistema IBC").join(APP_VERSAO), true));
+    }
+
+    let pasta_app = app
+        .path()
+        .app_data_dir()
+        .map_err(|erro| format!("Nao foi possivel resolver a pasta local do app: {erro}"))?;
+
+    Ok((pasta_app.join("ibc-data").join(APP_VERSAO), true))
+}
+
+fn garantir_subpastas_oficiais(pasta_raiz: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(pasta_raiz).map_err(|erro| erro.to_string())?;
+
+    for subpasta in subpastas_padrao() {
+        std::fs::create_dir_all(pasta_raiz.join(subpasta)).map_err(|erro| erro.to_string())?;
+    }
+
+    Ok(())
+}
+
+fn limpar_nome_arquivo_segmento(valor: &str) -> String {
+    let texto = valor.trim();
+    let mut resultado = String::with_capacity(texto.len());
+    let mut ultimo_foi_espaco = false;
+
+    for caractere in texto.chars() {
+        let invalido = matches!(caractere, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
+            || caractere.is_control();
+        let caractere_final = if invalido { ' ' } else { caractere };
+
+        if caractere_final.is_whitespace() {
+            if !ultimo_foi_espaco {
+                resultado.push(' ');
+                ultimo_foi_espaco = true;
+            }
+        } else {
+            resultado.push(caractere_final);
+            ultimo_foi_espaco = false;
+        }
+    }
+
+    resultado.trim_matches([' ', '.']).trim().to_string()
+}
+
+fn garantir_nome_arquivo_pdf_seguro(nome_arquivo: &str) -> String {
+    let nome_limpo = limpar_nome_arquivo_segmento(nome_arquivo);
+
+    if nome_limpo.is_empty() {
+        return "DOCUMENTO - SEM NOME.pdf".to_string();
+    }
+
+    if nome_limpo.to_ascii_lowercase().ends_with(".pdf") {
+        nome_limpo
+    } else {
+        format!("{nome_limpo}.pdf")
+    }
+}
+
+fn resolver_pasta_categoria(pasta_raiz: &Path, categoria: &str) -> PathBuf {
+    let categoria_normalizada = categoria.trim().to_ascii_lowercase();
+    let subpasta = match categoria_normalizada.as_str() {
+        "prestacoes" => "documentos/prestacoes",
+        "programacoes" => "documentos/programacoes",
+        _ => "documentos/declaracoes",
+    };
+
+    pasta_raiz.join(subpasta)
+}
+
+fn obter_ultimo_pdf_da_pasta(pasta: &Path) -> Result<PathBuf, String> {
+    let entradas = std::fs::read_dir(pasta)
+        .map_err(|erro| format!("Nao foi possivel listar a pasta de PDFs: {erro}"))?;
+    let mut candidatos = Vec::new();
+
+    for entrada in entradas {
+        let entrada = entrada.map_err(|erro| format!("Nao foi possivel ler a pasta de PDFs: {erro}"))?;
+        let caminho = entrada.path();
+
+        if !caminho.is_file() {
+            continue;
+        }
+
+        let extensao = caminho
+            .extension()
+            .and_then(|valor| valor.to_str())
+            .unwrap_or_default();
+
+        if !extensao.eq_ignore_ascii_case("pdf") {
+            continue;
+        }
+
+        let metadata = entrada
+            .metadata()
+            .map_err(|erro| format!("Nao foi possivel ler os dados do PDF: {erro}"))?;
+        let modificado_em = metadata
+            .modified()
+            .map_err(|erro| format!("Nao foi possivel ler a data do PDF: {erro}"))?;
+
+        candidatos.push((modificado_em, caminho));
+    }
+
+    candidatos.sort_by(|a, b| b.0.cmp(&a.0));
+
+    candidatos
+        .into_iter()
+        .next()
+        .map(|(_, caminho)| caminho)
+        .ok_or_else(|| "Nenhum PDF foi encontrado nesta pasta.".to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn abrir_caminho_no_windows(caminho: &Path, selecionar_arquivo: bool) -> Result<(), String> {
+    if selecionar_arquivo && caminho.is_file() {
+        std::process::Command::new("explorer.exe")
+            .arg(format!("/select,{}", caminho.to_string_lossy()))
+            .spawn()
+            .map_err(|erro| format!("Nao foi possivel abrir o caminho no Windows: {erro}"))?;
+        return Ok(());
+    }
+
+    if caminho.is_file() {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", &caminho.to_string_lossy()])
+            .spawn()
+            .map_err(|erro| format!("Nao foi possivel abrir o arquivo no Windows: {erro}"))?;
+        return Ok(());
+    }
+
+    std::process::Command::new("explorer.exe")
+        .arg(caminho)
+        .spawn()
+        .map_err(|erro| format!("Nao foi possivel abrir o caminho no Windows: {erro}"))?;
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn abrir_caminho_no_windows(_caminho: &Path, _selecionar_arquivo: bool) -> Result<(), String> {
+    Err("Abrir caminho automaticamente so esta implementado no Windows.".to_string())
+}
+
+fn resolver_caminho_pdf_unico(pasta_destino: &Path, nome_base: &str) -> PathBuf {
+    let nome_arquivo = garantir_nome_arquivo_pdf_seguro(nome_base);
+    let caminho_inicial = pasta_destino.join(&nome_arquivo);
+
+    if !caminho_inicial.exists() {
+        return caminho_inicial;
+    }
+
+    let caminho_path = Path::new(&nome_arquivo);
+    let stem = caminho_path
+        .file_stem()
+        .and_then(|valor| valor.to_str())
+        .unwrap_or("DOCUMENTO");
+    let extensao = caminho_path
+        .extension()
+        .and_then(|valor| valor.to_str())
+        .unwrap_or("pdf");
+
+    for indice in 2..10000 {
+        let candidato = pasta_destino.join(format!("{stem} ({indice}).{extensao}"));
+        if !candidato.exists() {
+            return candidato;
+        }
+    }
+
+    pasta_destino.join(format!("{stem}-{}.{}", chrono_like_timestamp(), extensao))
 }
 
 #[tauri::command]
@@ -1041,15 +1322,12 @@ fn preparar_pastas_compartilhadas(
         return Err("Informe a pasta raiz compartilhada.".to_string());
     }
 
-    std::fs::create_dir_all(&pasta_raiz).map_err(|erro| erro.to_string())?;
+    garantir_subpastas_oficiais(&pasta_raiz)?;
 
-    let mut pastas_criadas = Vec::new();
-
-    for subpasta in subpastas_padrao() {
-        let caminho = pasta_raiz.join(subpasta);
-        std::fs::create_dir_all(&caminho).map_err(|erro| erro.to_string())?;
-        pastas_criadas.push(caminho.to_string_lossy().to_string());
-    }
+    let pastas_criadas = subpastas_padrao()
+        .iter()
+        .map(|subpasta| pasta_raiz.join(subpasta).to_string_lossy().to_string())
+        .collect::<Vec<_>>();
 
     let computador = nome_computador();
     let agora = std::time::SystemTime::now()
@@ -1060,15 +1338,16 @@ fn preparar_pastas_compartilhadas(
       "versao": 1,
       "pastaRaiz": pasta_raiz.to_string_lossy(),
       "pastas": {
-        "dados": "Dados",
-        "documentos": "Documentos",
-        "declaracoes": "Documentos/Declaracoes",
-        "prestacoes": "Documentos/Prestacoes",
-        "emails": "Documentos/Emails",
-        "backups": "Backups",
-        "modelos": "Modelos",
-        "assinaturas": "Assinaturas",
-        "logs": "Logs"
+      "dados": "dados",
+      "documentos": "documentos",
+      "declaracoes": "documentos/declaracoes",
+      "prestacoes": "documentos/prestacoes",
+      "programacoes": "documentos/programacoes",
+      "emails": "documentos/emails",
+      "backups": "backups",
+      "modelos": "modelos",
+      "assinaturas": "assinaturas",
+      "logs": "logs"
       },
       "atualizadoPor": computador,
       "atualizadoEmUnix": agora
@@ -1078,8 +1357,8 @@ fn preparar_pastas_compartilhadas(
       "abertoEmUnix": agora,
       "observacao": "Controle simples para avisar uso em outro computador."
     });
-    let arquivo_configuracao = pasta_raiz.join("Dados").join("configuracao.json");
-    let arquivo_lock = pasta_raiz.join("Dados").join("lock.json");
+    let arquivo_configuracao = pasta_raiz.join("dados").join("configuracao.json");
+    let arquivo_lock = pasta_raiz.join("dados").join("lock.json");
 
     std::fs::write(
         &arquivo_configuracao,
@@ -1101,6 +1380,85 @@ fn preparar_pastas_compartilhadas(
         ],
         pastas_criadas,
     })
+}
+
+#[tauri::command]
+fn salvar_pdf_oficial(
+    app: tauri::AppHandle,
+    payload: SalvarPdfOficialPayload,
+) -> Result<ResultadoSalvarPdfOficial, String> {
+    let base64_limpo = normalizar_base64(&payload.base64);
+
+    if base64_limpo.is_empty() {
+        return Err("PDF ausente para salvamento oficial.".to_string());
+    }
+
+    let bytes = STANDARD
+        .decode(base64_limpo.as_bytes())
+        .map_err(|erro| format!("PDF invalido para salvar: {erro}"))?;
+    let (pasta_raiz, usando_pasta_temporaria) =
+        resolver_pasta_raiz_oficial(&app, &payload.pasta_raiz)?;
+
+    garantir_subpastas_oficiais(&pasta_raiz)?;
+
+    let pasta_destino = resolver_pasta_categoria(&pasta_raiz, &payload.categoria);
+    std::fs::create_dir_all(&pasta_destino).map_err(|erro| erro.to_string())?;
+
+    let caminho_arquivo = resolver_caminho_pdf_unico(&pasta_destino, &payload.nome_arquivo);
+    std::fs::write(&caminho_arquivo, bytes).map_err(|erro| erro.to_string())?;
+
+    Ok(ResultadoSalvarPdfOficial {
+        pasta_raiz: pasta_raiz.to_string_lossy().to_string(),
+        caminho_arquivo: caminho_arquivo.to_string_lossy().to_string(),
+        nome_arquivo: caminho_arquivo
+            .file_name()
+            .and_then(|valor| valor.to_str())
+            .unwrap_or("documento.pdf")
+            .to_string(),
+        categoria: payload.categoria,
+        usando_pasta_temporaria,
+    })
+}
+
+#[tauri::command]
+fn abrir_caminho_sistema(payload: AbrirCaminhoSistemaPayload) -> Result<(), String> {
+    let caminho = PathBuf::from(payload.caminho.trim());
+
+    if caminho.as_os_str().is_empty() {
+        return Err("Caminho nao informado.".to_string());
+    }
+
+    if !caminho.exists() {
+        return Err("O caminho informado nao existe mais.".to_string());
+    }
+
+    abrir_caminho_no_windows(&caminho, payload.selecionar_arquivo.unwrap_or(false))
+}
+
+#[tauri::command]
+fn obter_ultimo_pdf_oficial(
+    app: tauri::AppHandle,
+    payload: ObterUltimoPdfOficialPayload,
+) -> Result<String, String> {
+    let categoria = normalizar_texto(&payload.categoria);
+    let (pasta_raiz, usando_pasta_temporaria) =
+        resolver_pasta_raiz_oficial(&app, &payload.pasta_raiz)?;
+
+    if usando_pasta_temporaria {
+        return Err(
+            "A pasta base do sistema ainda nao foi configurada. Configure-a antes de abrir a programacao mensal."
+                .to_string(),
+        );
+    }
+
+    let pasta_categoria = resolver_pasta_categoria(&pasta_raiz, &categoria);
+
+    if !pasta_categoria.exists() {
+        return Err("A pasta oficial desta categoria ainda nao existe.".to_string());
+    }
+
+    let caminho = obter_ultimo_pdf_da_pasta(&pasta_categoria)?;
+    Ok(caminho.to_string_lossy().to_string())
 }
 
 fn migrations() -> Vec<Migration> {
@@ -1154,6 +1512,9 @@ pub fn run() {
         )
         .invoke_handler(tauri::generate_handler![
             preparar_pastas_compartilhadas,
+            salvar_pdf_oficial,
+            abrir_caminho_sistema,
+            obter_ultimo_pdf_oficial,
             enviar_email_documento,
             listar_emails_gmail,
             buscar_thread_gmail,

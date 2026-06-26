@@ -109,26 +109,33 @@ function obterMesesAfetados(resumo) {
     adicionarMesesDaProgramacao(meses, alteracao.depois)
   })
 
-  return [...meses].sort().slice(0, 3)
+  return [...meses].sort()
 }
 
 function montarAnexosAgendaMensal(agendaAtual, mesesAfetados) {
-  return mesesAfetados.map((chaveMes) => {
-    const [anoTexto, mesTexto] = chaveMes.split('-')
-    const ano = Number(anoTexto)
-    const mes = Number(mesTexto)
-    const agendaDoMes = agendaAtual.find((item) => item.ano === ano && item.mes === mes) ?? {
-      ano,
-      mes,
-      programacoes: [],
-    }
+  const primeiroMesAfetado = [...mesesAfetados].sort()[0]
 
-    return gerarAnexoPdfAgendaMensal({
+  if (!primeiroMesAfetado) {
+    return []
+  }
+
+  const [anoTexto, mesTexto] = primeiroMesAfetado.split('-')
+  const ano = Number(anoTexto)
+  const mes = Number(mesTexto)
+  const agendaDoMes = agendaAtual.find((item) => item.ano === ano && item.mes === mes) ?? {
+    ano,
+    mes,
+    programacoes: [],
+  }
+
+  return [
+    gerarAnexoPdfAgendaMensal({
+      agendaMensal: agendaAtual,
       agendaDoMes,
       ano,
       mes,
-    })
-  })
+    }),
+  ]
 }
 
 export function criarAssinaturaAgendaProgramacao(agendaMensal = []) {

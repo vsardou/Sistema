@@ -2,6 +2,7 @@ import {
   carregarBancoSqliteLocal,
   marcarSqliteIndisponivel,
 } from '../../localFirst/sqliteDatabase'
+import { abrirCaminhoSistema } from './documentosOficiais'
 
 const DB_NOME = 'sistema-ibc-documentos'
 const DB_VERSAO = 1
@@ -179,8 +180,12 @@ export async function registrarDocumentoEmitido({
   aluno = '',
   nomeDocumento = '',
   nomeArquivoPdf = '',
+  caminhoPdf = '',
   anexoPrincipal = null,
   origem = '',
+  acaoGeradora = '',
+  statusDocumento = '',
+  emailDestinatario = '',
 } = {}) {
   const agora = new Date().toISOString()
   const documento = {
@@ -189,10 +194,12 @@ export async function registrarDocumentoEmitido({
     aluno: normalizarTexto(aluno) || 'Sem nome',
     nomeDocumento: normalizarTexto(nomeDocumento) || normalizarTexto(tipo) || 'Documento',
     nomeArquivoPdf: normalizarTexto(nomeArquivoPdf),
-    caminhoPdf: normalizarTexto(nomeArquivoPdf),
-    statusDocumento: anexoPrincipal?.base64 ? 'gerado' : 'sem_pdf',
+    caminhoPdf: normalizarTexto(caminhoPdf) || normalizarTexto(nomeArquivoPdf),
+    statusDocumento:
+      normalizarTexto(statusDocumento) || (anexoPrincipal?.base64 ? 'salvo' : 'sem_pdf'),
+    acaoGeradora: normalizarTexto(acaoGeradora) || 'salvar',
     enviadoPorEmail: false,
-    emailDestinatario: '',
+    emailDestinatario: normalizarTexto(emailDestinatario),
     enviadoEm: '',
     statusEnvio: 'nao_enviado',
     mensagemEnvio: '',
@@ -277,7 +284,16 @@ export async function atualizarEnvioDocumentoEmitido(id, atualizacao = {}) {
   return documentoAtualizado
 }
 
-export function abrirPdfDocumentoEmitido(documento) {
+export async function abrirPdfDocumentoEmitido(documento) {
+  if (documento?.caminhoPdf) {
+    try {
+      await abrirCaminhoSistema(documento.caminhoPdf)
+      return true
+    } catch {
+      // Se o arquivo saiu do lugar, tenta o anexo em memória como fallback.
+    }
+  }
+
   const base64 = documento?.anexoPrincipal?.base64
   const mimeType = documento?.anexoPrincipal?.mimeType || 'application/pdf'
 

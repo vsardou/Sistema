@@ -8,17 +8,14 @@ function removerAcentos(texto) {
   return normalizarTexto(texto).normalize('NFD').replace(/[\u0300-\u036f]/g, '')
 }
 
-function slugificar(texto) {
-  const textoNormalizado = removerAcentos(texto).toUpperCase()
+function limparTrechoNomeArquivo(texto, fallback = '') {
+  const textoNormalizado = removerAcentos(texto)
+    .toUpperCase()
+    .replace(/[\\/:*?"<>|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
 
-  if (!textoNormalizado) {
-    return ''
-  }
-
-  return textoNormalizado
-    .replace(/[^A-Z0-9]+/g, '_')
-    .replace(/^_+/g, '')
-    .replace(/_+$/g, '')
+  return textoNormalizado || fallback
 }
 
 export function normalizarEmail(valor) {
@@ -37,35 +34,46 @@ export function criarAssuntoSugeridoEmail({ tipoDocumento = '', nomePessoa = '' 
 }
 
 export function criarMensagemSugeridaEmail({ tipoDocumento = '', nomePessoa = '' } = {}) {
-  const tipo = normalizarTexto(tipoDocumento) || 'documento'
-  const nome = normalizarTexto(nomePessoa)
-  const saudacao = nome ? `Ola, ${nome}.` : 'Ola,'
+  const tipo = normalizarTexto(tipoDocumento).toLowerCase()
+  const nome = normalizarTexto(nomePessoa) || 'aluno'
   const identidadeInstitucional = carregarConfiguracaoInstitucional()
-  const [endereco, telefone, celular, email, site] = identidadeInstitucional.rodapeLinhas
+
+  const corpoPrincipal = tipo.includes('prestação')
+    ? `Segue em anexo a prestação de contas referente ao treinamento de ${nome}.`
+    : `Segue em anexo a declaração referente ao treinamento de ${nome}.`
 
   return [
-    saudacao,
+    'Prezados,',
     '',
-    `Segue em anexo o ${tipo} solicitado.`,
-    '',
-    'Qualquer ajuste, estamos a disposicao.',
+    corpoPrincipal,
     '',
     'Atenciosamente,',
-    identidadeInstitucional.empresa,
-    telefone,
-    celular,
-    email,
-    site,
-    endereco,
+    identidadeInstitucional.empresa || 'IBC',
   ].join('\n')
 }
 
-export function criarNomeArquivoPdf({ tipoDocumento = '', nomePessoa = '', data = new Date() } = {}) {
-  const tipoSlug = slugificar(tipoDocumento) || 'DOCUMENTO'
-  const nomeSlug = slugificar(nomePessoa) || 'SEM_NOME'
+export function criarNomeArquivoPdf({
+  tipoDocumento = '',
+  nomePessoa = '',
+  subnivel = '',
+  data = new Date(),
+} = {}) {
+  const tipoBase = limparTrechoNomeArquivo(tipoDocumento, 'DOCUMENTO')
+  const nomeBase = limparTrechoNomeArquivo(nomePessoa, 'SEM NOME')
+  const subnivelBase = limparTrechoNomeArquivo(subnivel)
   const ano = String(data.getFullYear())
   const mes = String(data.getMonth() + 1).padStart(2, '0')
   const dia = String(data.getDate()).padStart(2, '0')
+  const hora = String(data.getHours()).padStart(2, '0')
+  const minuto = String(data.getMinutes()).padStart(2, '0')
 
-  return `${tipoSlug}_${nomeSlug}_${ano}-${mes}-${dia}.pdf`
+  const partes = [tipoBase, nomeBase]
+
+  if (subnivelBase) {
+    partes.push(subnivelBase)
+  }
+
+  partes.push(`${ano}-${mes}-${dia} ${hora}${minuto}`)
+
+  return `${partes.join(' - ')}.pdf`
 }

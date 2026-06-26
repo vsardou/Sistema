@@ -1,7 +1,10 @@
 import BarraTopo from '../components/BarraTopo'
 import CardBotao from '../components/CardBotao'
+import { carregarConfiguracaoSistema } from '../features/configuracoes/configuracaoSistema'
 
 export default function TelaInicial({ onAbrir }) {
+  const configuracaoSistema = carregarConfiguracaoSistema()
+  const pastaBaseConfigurada = Boolean(configuracaoSistema.pastaRaiz)
   const cards = [
     {
       chave: 'programacao',
@@ -75,13 +78,6 @@ export default function TelaInicial({ onAbrir }) {
       <BarraTopo
         titulo="Painel principal"
         subtitulo="Agendar, emitir e consultar documentos."
-        acoesRapidas={[
-          { rotulo: 'Abrir programacao', onClick: () => onAbrir('programacao') },
-          { rotulo: 'Emitir declaracao', onClick: () => onAbrir('declaracoes') },
-          { rotulo: 'E-mail IBC', onClick: () => onAbrir('emails') },
-          { rotulo: 'Configurar sistema', onClick: () => onAbrir('configuracoes') },
-          { rotulo: 'Documentos emitidos', onClick: () => onAbrir('buscar') },
-        ]}
       />
 
       <section className="rounded-lg border border-[#CFCFCF] bg-white p-5 shadow-sm md:p-7">
@@ -94,18 +90,23 @@ export default function TelaInicial({ onAbrir }) {
               Escolha o que vai fazer agora
             </h2>
           </div>
-          <div className="grid gap-2 text-sm font-bold text-[#4B5563] sm:grid-cols-3">
-            <span className="rounded-full bg-[#F6F6F6] px-3 py-2 ring-1 ring-[#CFCFCF]">
-              Local
-            </span>
-            <span className="rounded-full bg-[#F6F6F6] px-3 py-2 ring-1 ring-[#CFCFCF]">
-              Salvamento automatico
-            </span>
-            <span className="rounded-full bg-[#F6F6F6] px-3 py-2 ring-1 ring-[#CFCFCF]">
-              PDFs no historico
-            </span>
-          </div>
         </div>
+
+        {!pastaBaseConfigurada ? (
+          <div className="mb-6 rounded-[20px] border border-[#F3D9A2] bg-[#FFF7E4] px-4 py-4 text-sm font-semibold text-[#8C5A00]">
+            A pasta base oficial ainda não foi configurada. O sistema vai usar uma pasta temporária
+            em Downloads até você apontar a pasta principal ou OneDrive.
+            <div className="mt-3">
+              <button
+                type="button"
+                onClick={() => onAbrir('configuracoes')}
+                className="rounded-[16px] border border-[#D9D9D9] bg-white px-4 py-3 text-sm font-semibold text-[#222222]"
+              >
+                Configurar pasta do sistema
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
           {cards.map((card) => (
